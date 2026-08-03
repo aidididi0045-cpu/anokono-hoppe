@@ -237,8 +237,9 @@ const hint = document.getElementById('hint');
 const resetBtn = document.getElementById('resetBtn');
 const shakeBtn = document.getElementById('shakeBtn');
 
-// メッシュ設定
-const GRID = 48;              // 分割数(片辺)細かいほど滑らか
+// メッシュ設定(スマホは負荷を抑えるため粗めに)
+const IS_MOBILE = (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches);
+const GRID = IS_MOBILE ? 28 : 48; // 分割数(片辺)
 let img = null;
 let cols, rows, cellW, cellH;
 let pts = [];                 // {x,y,ox,oy,vx,vy}
@@ -335,11 +336,16 @@ function setup(image){
   // ステージに収まるサイズ
   const stage = document.getElementById('stage');
   const maxW = stage.clientWidth - 24, maxH = stage.clientHeight - 24;
-  const scale = Math.min(maxW/img.width, maxH/img.height, 1.5);
-  cv.width  = Math.round(img.width * scale);
-  cv.height = Math.round(img.height * scale);
-  cv.style.width = cv.width + 'px';
-  cv.style.height = cv.height + 'px';
+  const cssScale = Math.min(maxW/img.width, maxH/img.height, 1.5);
+  // ★ スマホは内部解像度を上限640pxに(表示サイズはそのまま、描画負荷だけ減る)
+  let resScale = cssScale;
+  if(IS_MOBILE){
+    resScale = Math.min(cssScale, 640 / Math.max(img.width, img.height));
+  }
+  cv.width  = Math.round(img.width * resScale);
+  cv.height = Math.round(img.height * resScale);
+  cv.style.width  = Math.round(img.width * cssScale) + 'px';
+  cv.style.height = Math.round(img.height * cssScale) + 'px';
 
   cols = GRID; rows = Math.max(8, Math.round(GRID * cv.height / cv.width));
   cellW = cv.width / cols; cellH = cv.height / rows;
@@ -558,11 +564,23 @@ function jiggleWeight(p){
 
 function draw(){
   ctx.clearRect(0,0,cv.width,cv.height);
+  // ★ ベースは元画像を1回描くだけ(超軽量)
+  ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, cv.width, cv.height);
+
+  // ★ 変形しているセルだけ三角形で上描きする(ダーティセル方式)
+  //    静止時は三角形ゼロ、引っ張り中も動いている領域だけなので劇的に軽い
+  const EPS = 0.15; // これ以下の変位は「静止」とみなす
+  const moved = new Uint8Array(pts.length);
+  for(let i=0;i<pts.length;i++){
+    const p = pts[i];
+    if(Math.abs(p.x - p.ox) > EPS || Math.abs(p.y - p.oy) > EPS) moved[i] = 1;
+  }
   const sw = img.width / cols, sh = img.height / rows;
   for(let r=0;r<rows;r++){
     for(let c=0;c<cols;c++){
-      const p00 = pts[idx(c,r)],   p10 = pts[idx(c+1,r)];
-      const p01 = pts[idx(c,r+1)], p11 = pts[idx(c+1,r+1)];
+      const i00 = idx(c,r), i10 = idx(c+1,r), i01 = idx(c,r+1), i11 = idx(c+1,r+1);
+      if(!(moved[i00] || moved[i10] || moved[i01] || moved[i11])) continue; // 全点静止→ベース画像のままでOK
+      const p00 = pts[i00], p10 = pts[i10], p01 = pts[i01], p11 = pts[i11];
       drawTri(p00,p10,p01, c*sw,r*sh, (c+1)*sw,r*sh, c*sw,(r+1)*sh);
       drawTri(p11,p01,p10, (c+1)*sw,(r+1)*sh, c*sw,(r+1)*sh, (c+1)*sw,r*sh);
     }
