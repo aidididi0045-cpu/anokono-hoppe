@@ -189,7 +189,6 @@
   button.show{display:inline-block;}
   button:active{transform:translate(4px,4px);box-shadow:0 0 0 var(--ink);}
   button.primary{background:var(--pink);color:#fff;}
-  #shakeBtn.on{background:var(--teal);color:#fff;}
   #onomatopeBtn{background:var(--sun);}
   #hint{
     position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
@@ -222,7 +221,6 @@
 <footer>
   <button id="resetBtn">🔄 べつの写真</button>
   <button id="onomatopeBtn">💬 オノマトペ ON</button>
-  <button id="shakeBtn" class="primary">📳 振ってぷるぷる ON</button>
 </footer>
 
 <input type="file" id="file" accept="image/*">
@@ -235,7 +233,6 @@ const dz = document.getElementById('dropzone');
 const fileInput = document.getElementById('file');
 const hint = document.getElementById('hint');
 const resetBtn = document.getElementById('resetBtn');
-const shakeBtn = document.getElementById('shakeBtn');
 
 // メッシュ設定(スマホは負荷を抑えるため粗めに)
 const IS_MOBILE = (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches);
@@ -246,8 +243,6 @@ let pts = [];                 // {x,y,ox,oy,vx,vy}
 const STIFF = 0.12;           // バネの強さ(元に戻る力)
 const DAMP  = 0.86;           // 減衰(控えめなぷるぷる)
 let grab = null;              // {idx:[...], weights:[...], px, py}
-let motionOn = false;
-let shakeVX = 0, shakeVY = 0;
 let redness = 0;              // 0〜1、引っ張りすぎ度
 let lastGrabX = 0, lastGrabY = 0;
 const handCursor = document.getElementById('handCursor');
@@ -361,7 +356,6 @@ function setup(image){
   cv.classList.add('active');
   resetBtn.classList.add('show');
   onomatopeBtn.classList.add('show');
-  shakeBtn.classList.add('show');
   hint.classList.add('show');
   setTimeout(()=>hint.classList.remove('show'), 3500);
 }
@@ -386,7 +380,7 @@ function startGrab(px, py){
     grab = {idx:grabbed, weights, px, py, sx:px, sy:py, maxStretch:0, t0:performance.now()};
     lastGrabX = px; lastGrabY = py;
     sfxGrab();
-    vibrate(12);
+    vibrate(15);
     cv.classList.add('grabbing');
   }
 }
@@ -427,7 +421,7 @@ function poke(px, py){
   lastGrabX = px; lastGrabY = py;
   redness = Math.max(redness, 0.25);
   sfxPoke();
-  vibrate(10);
+  vibrate([18, 35, 12]);  // ぷにっ(短→間→短の2連パルス)
   popPoyon(px, py, pick(['ぷにっ','つんっ','ぷるっ']));
 }
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
@@ -444,7 +438,8 @@ function endGrab(){
       return;
     }
     sfxRelease(grab.maxStretch || 0);
-    vibrate(grab.maxStretch > 0.6 ? [10,30,10] : 8);
+    // ぽよんっ(強く引っ張るほどしっかり震える)
+    vibrate(grab.maxStretch > 0.6 ? [15, 30, 25, 30, 10] : [12, 25, 8]);
     let cx=0, cy=0;
     grab.idx.forEach(i => { cx += pts[i].x; cy += pts[i].y; });
     cx /= grab.idx.length; cy /= grab.idx.length;
@@ -503,12 +498,11 @@ function physics(){
     const tx = p.ox + pullX * w;
     const ty = p.oy + pullY * w;
     const stiff = w > 0 ? STIFF + (GRAB_STIFF - STIFF) * w : STIFF;
-    p.vx += (tx - p.x) * stiff + shakeVX * (0.5 + Math.random()*0.5) * jiggleWeight(p);
-    p.vy += (ty - p.y) * stiff + shakeVY * (0.5 + Math.random()*0.5) * jiggleWeight(p);
+    p.vx += (tx - p.x) * stiff;
+    p.vy += (ty - p.y) * stiff;
     p.vx *= DAMP; p.vy *= DAMP;
     p.x += p.vx; p.y += p.vy;
   }
-  shakeVX *= 0.7; shakeVY *= 0.7;
 
   // ★ 引っ張っている間、時間とともに赤みがじわじわ濃くなる
   if(grab){
@@ -554,12 +548,6 @@ function relax(i, j, rest, minD, maxD, grabbedSet){
   if(aFixed){ b.x -= dx*diff*2; b.y -= dy*diff*2; }
   else if(bFixed){ a.x += dx*diff*2; a.y += dy*diff*2; }
   else { a.x += dx*diff; a.y += dy*diff; b.x -= dx*diff; b.y -= dy*diff; }
-}
-// 端は揺れにくく、中央付近(ほっぺゾーン)はよく揺れる
-function jiggleWeight(p){
-  const nx = p.ox / cv.width - 0.5, ny = p.oy / cv.height - 0.5;
-  const d = Math.hypot(nx, ny*1.2);
-  return Math.max(0, 1 - d*2);
 }
 
 function draw(){
@@ -635,41 +623,6 @@ function loop(){
   requestAnimationFrame(loop);
 }
 loop();
-
-// ===== 加速度センサー(振ってぷるぷる) =====
-function handleMotion(e){
-  const a = e.accelerationIncludingGravity;
-  if(!a) return;
-  // 急な加速だけ拾う
-  handleMotion.px = handleMotion.px ?? a.x;
-  handleMotion.py = handleMotion.py ?? a.y;
-  const dx = a.x - handleMotion.px, dy = a.y - handleMotion.py;
-  handleMotion.px = a.x; handleMotion.py = a.y;
-  if(Math.abs(dx) > 1 || Math.abs(dy) > 1){
-    shakeVX += -dx * 1.6;
-    shakeVY +=  dy * 1.6;
-  }
-}
-shakeBtn.addEventListener('click', async () => {
-  if(motionOn){
-    window.removeEventListener('devicemotion', handleMotion);
-    motionOn = false;
-    shakeBtn.textContent = '📳 振ってぷるぷる ON';
-    shakeBtn.classList.remove('on');
-    return;
-  }
-  // iOS は許可が必要
-  if(typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
-    try{
-      const res = await DeviceMotionEvent.requestPermission();
-      if(res !== 'granted'){ alert('センサーの許可がもらえませんでした🥲'); return; }
-    }catch(err){ alert('このブラウザではセンサーが使えないみたいです'); return; }
-  }
-  window.addEventListener('devicemotion', handleMotion);
-  motionOn = true;
-  shakeBtn.textContent = '📳 ぷるぷる中…（もう一度でOFF）';
-  shakeBtn.classList.add('on');
-});
 
 window.addEventListener('resize', () => { if(img) setup(img); });
 })();
